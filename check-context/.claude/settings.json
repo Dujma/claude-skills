@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/check-context.py prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Read|Bash|Agent|WebFetch",
@@ -7,17 +18,6 @@
           {
             "type": "command",
             "command": "python3 .claude/hooks/check-context.py tool",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/check-context.py stop",
             "timeout": 10
           }
         ]

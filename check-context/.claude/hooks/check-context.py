@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Context window monitor for Claude Code.
 
-Used by both hooks:
-  - PostToolUse (arg: "tool"): soft nudge mid-run, hard block at critical
-  - Stop (arg: "stop"): hard block at threshold, safety net
-
-Dedup: counts assistant turns since last user message in the session JSONL.
-If >1, we already notified this turn — stay silent.
+Used by two hooks:
+  - UserPromptSubmit (arg: "prompt"): injects context status before Claude
+    processes each user message. No loop — fires once per user turn.
+  - PostToolUse (arg: "tool"): mid-run nudge during long tool call chains.
+    Soft nudge at threshold, hard block only at critical (>85%).
 """
 import os, sys, json, glob
 
@@ -53,7 +52,7 @@ def load_settings():
         return {}
 
 
-def get_session_data():
+def get_context_usage():
     session_dir = find_session_dir()
     if not session_dir:
         return None
@@ -64,9 +63,6 @@ def get_session_data():
 
     model = None
     last_usage = None
-    total_output = 0
-    message_count = 0
-    assistant_turns_since_user = 0
 
     with open(session_file) as f:
         for line in f:
@@ -74,20 +70,13 @@ def get_session_data():
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-
-            msg_type = obj.get('type')
-            if msg_type in ('human', 'user'):
-                assistant_turns_since_user = 0
-            if msg_type == 'assistant':
-                assistant_turns_since_user += 1
+            if obj.get('type') == 'assistant':
                 msg = obj.get('message', {})
                 if not model:
                     model = msg.get('model')
                 usage = msg.get('usage', {})
                 if usage:
                     last_usage = usage
-                    message_count += 1
-                    total_output += usage.get('output_tokens', 0)
 
     if not last_usage or not model:
         return None
@@ -103,31 +92,70 @@ def get_session_data():
         "used_tokens": used_tokens,
         "total_tokens": context_window,
         "percent_used": percent_used,
-        "assistant_messages": message_count,
-        "assistant_turns_since_user": assistant_turns_since_user,
     }
 
 
-def main():
-    hook_type = sys.argv[1] if len(sys.argv) > 1 else "stop"
+def handle_prompt():
+    """UserPromptSubmit: inject context status before Claude processes the prompt.
 
-    data = get_session_data()
-    if not data:
-        sys.exit(0)
-
-    if data['assistant_turns_since_user'] > 1:
+    Returns additionalContext that Claude sees alongside the user's message.
+    Cannot loop — fires exactly once per user message.
+    """
+    usage = get_context_usage()
+    if not usage:
         sys.exit(0)
 
     settings = load_settings()
     threshold = settings.get('threshold_percent', DEFAULT_THRESHOLD)
-    percent = data['percent_used']
-    used_k = round(data['used_tokens'] / 1000)
-    total_k = round(data['total_tokens'] / 1000)
+    percent = usage['percent_used']
+    used_k = round(usage['used_tokens'] / 1000)
+    total_k = round(usage['total_tokens'] / 1000)
 
     if percent < threshold:
         sys.exit(0)
 
-    # Critical (>85%): always hard block
+    if percent > 85:
+        print(json.dumps({
+            "additionalContext": (
+                f"[CONTEXT CRITICAL: {percent}% used ({used_k}k/{total_k}k tokens)] "
+                f"Before doing anything else, tell the user that context is critically high. "
+                f"Summarize what has been accomplished so far and what remains. "
+                f"Strongly recommend writing a HANDOVER.md and starting a fresh session. "
+                f"Only continue if the user explicitly asks you to."
+            )
+        }))
+    else:
+        print(json.dumps({
+            "additionalContext": (
+                f"[CONTEXT: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%)] "
+                f"Inform the user that context is getting high. "
+                f"Offer two options: (1) continue working, accepting the risk of hitting limits, "
+                f"or (2) write a HANDOVER.md to capture progress for a fresh session."
+            )
+        }))
+
+    sys.exit(0)
+
+
+def handle_tool():
+    """PostToolUse: mid-run nudge during long tool call chains.
+
+    Soft nudge at threshold (Claude finishes current task then reports).
+    Hard block only at critical (>85%).
+    """
+    usage = get_context_usage()
+    if not usage:
+        sys.exit(0)
+
+    settings = load_settings()
+    threshold = settings.get('threshold_percent', DEFAULT_THRESHOLD)
+    percent = usage['percent_used']
+    used_k = round(usage['used_tokens'] / 1000)
+    total_k = round(usage['total_tokens'] / 1000)
+
+    if percent < threshold:
+        sys.exit(0)
+
     if percent > 85:
         print(json.dumps({
             "decision": "block",
@@ -136,14 +164,10 @@ def main():
                 f"Finish your immediate action, then STOP and tell the user:\n"
                 f"- Context is at {percent}% — continuing risks losing conversation history\n"
                 f"- Summarize what was accomplished and what remains\n"
-                f"- Offer to write a HANDOVER.md so a fresh session can continue\n"
-                f"- Strongly recommend starting a new session"
+                f"- Strongly recommend writing HANDOVER.md and starting a fresh session"
             )
         }))
-        sys.exit(0)
-
-    # At threshold: tool hook nudges, stop hook blocks
-    if hook_type == "tool":
+    else:
         print(json.dumps({
             "reason": (
                 f"Context nudge: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%). "
@@ -151,21 +175,17 @@ def main():
                 f"Offer to continue or create a HANDOVER.md."
             )
         }))
-    else:
-        print(json.dumps({
-            "decision": "block",
-            "reason": (
-                f"CONTEXT CHECK: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%). "
-                f"Tell the user:\n"
-                f"- Context window is at {percent}% capacity\n"
-                f"- Recommend finishing the current task and pausing\n"
-                f"- Offer two options: (1) continue working (risk of hitting limits), "
-                f"or (2) create a HANDOVER.md to capture progress for a fresh session\n"
-                f"- If the user chooses to continue, keep working — you will be notified again when usage grows"
-            )
-        }))
 
     sys.exit(0)
+
+
+def main():
+    hook_type = sys.argv[1] if len(sys.argv) > 1 else "prompt"
+
+    if hook_type == "tool":
+        handle_tool()
+    else:
+        handle_prompt()
 
 
 if __name__ == '__main__':
