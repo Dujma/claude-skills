@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/check-context.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
