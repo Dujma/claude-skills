@@ -1,4 +1,4 @@
 {
-  "threshold_percent": 60,
-  "on_threshold": "complete_and_ask"
+  "warn_threshold": 50,
+  "critical_threshold": 75
 }
