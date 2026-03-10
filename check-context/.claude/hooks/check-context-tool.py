@@ -3,13 +3,16 @@
 
 Fires after heavy tool calls (Read, Bash, Agent, WebFetch).
 Uses a counter to only check every N calls, avoiding overhead.
-Returns a non-blocking message that Claude sees mid-run — a nudge,
-not a hard stop. Claude decides when to pause based on what it's doing.
+Also checks the notification guard so it won't re-nudge after
+the user has already been informed at this context level.
 """
 import sys, json, os
 
 sys.path.insert(0, os.path.join(os.getcwd(), '.claude', 'hooks'))
-from context_lib import get_context_usage, load_settings, read_counter, write_counter, reset_counter, DEFAULT_THRESHOLD
+from context_lib import (
+    get_context_usage, load_settings, read_counter, write_counter,
+    reset_counter, should_notify, write_last_notified, DEFAULT_THRESHOLD,
+)
 
 CHECK_EVERY_N = 10
 
@@ -36,12 +39,14 @@ def main():
     used_k = round(usage['used_tokens'] / 1000)
     total_k = round(usage['total_tokens'] / 1000)
 
-    # Below threshold: silent
-    if percent < threshold:
+    # Check if we should notify (handles dedup)
+    if not should_notify(percent, threshold):
         sys.exit(0)
 
-    # Above threshold: soft nudge — NOT a block
-    # Print to stderr so Claude sees it as feedback but isn't forced to stop
+    # Record that we notified at this level
+    write_last_notified(percent)
+
+    # Critical: hard block
     if percent > 85:
         print(json.dumps({
             "decision": "block",
@@ -54,8 +59,7 @@ def main():
             )
         }))
     else:
-        # At threshold but not critical — nudge, don't block
-        # Use reason as feedback that Claude sees
+        # At threshold: soft nudge
         print(json.dumps({
             "reason": (
                 f"Context nudge: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%). "

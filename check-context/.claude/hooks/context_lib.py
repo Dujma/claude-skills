@@ -9,6 +9,8 @@ MODEL_CONTEXT_WINDOWS = {
 DEFAULT_CONTEXT_WINDOW = 200000
 DEFAULT_THRESHOLD = 60
 COUNTER_FILE = '/tmp/claude-context-hook-counter'
+NOTIFIED_FILE = '/tmp/claude-context-hook-notified'
+RENOTIFY_INCREMENT = 10  # only notify again after this many % more usage
 
 
 def find_session_dir():
@@ -108,3 +110,41 @@ def write_counter(n):
 
 def reset_counter():
     write_counter(0)
+
+
+def read_last_notified():
+    """Read the percentage at which we last notified."""
+    try:
+        with open(NOTIFIED_FILE) as f:
+            return float(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return 0.0
+
+
+def write_last_notified(percent):
+    with open(NOTIFIED_FILE, 'w') as f:
+        f.write(str(percent))
+
+
+def should_notify(current_percent, threshold):
+    """Check if we should notify based on last notification.
+
+    Returns True if:
+    - We haven't notified yet and we're above threshold
+    - Context has grown by RENOTIFY_INCREMENT since last notification
+    - We're in the critical zone (>85%) and haven't notified for this zone
+    """
+    last = read_last_notified()
+
+    if current_percent < threshold:
+        return False
+
+    # Never notified above threshold yet
+    if last < threshold:
+        return True
+
+    # Context grew by the increment since last notification
+    if current_percent >= last + RENOTIFY_INCREMENT:
+        return True
+
+    return False
