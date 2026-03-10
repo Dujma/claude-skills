@@ -1,6 +1,6 @@
 # check-context
 
-Gives Claude awareness of its context window and makes it communicate usage to the user. When context gets high, Claude automatically reports the status and recommends next steps — continue or hand over to a fresh session.
+Gives Claude awareness of its context window and makes it communicate usage to the user. Uses two layers — a mid-run nudge during long tool call chains and a hard check at the end of each response — so context issues are caught early and reported honestly.
 
 ## Why
 
@@ -8,12 +8,24 @@ Claude Code has a 200k token context window. Without awareness, Claude will keep
 
 ## How it works
 
-Two mechanisms work together:
+Two hooks work as layers:
 
-1. **Stop hook** (automatic) — A hook runs after every Claude response. When context crosses the configured threshold, it interrupts Claude and forces it to report usage to the user with a recommendation.
-2. **Skill** (manual) — The user or Claude can invoke `/check-context` at any time to see current usage.
+### Layer 1: Mid-run nudge (PostToolUse)
+Fires after heavy tool calls (`Read`, `Bash`, `Agent`, `WebFetch`) — the tools that inflate context. Uses a counter to only check every 10 calls, keeping overhead minimal.
 
-The hook is the safety net. It fires automatically and cannot be skipped.
+- **Below threshold**: Silent. No output.
+- **At threshold**: Soft nudge. Claude sees a message telling it to finish its current logical task, then pause and report to the user. Claude decides when the right moment is — it won't cut off mid-operation.
+- **Critical (>85%)**: Hard block. Claude must finish its immediate action and stop.
+
+### Layer 2: End-of-response safety net (Stop)
+Fires after every Claude response. If context is above threshold and Claude didn't act on the mid-run nudge, this catches it with a hard block.
+
+- **Below threshold**: Silent.
+- **At threshold**: Block. Claude must report to the user before continuing.
+- **Critical (>85%)**: Block. Claude must stop and recommend handover.
+
+### The skill (manual)
+The user or Claude can also invoke `/check-context` at any time for an on-demand status check.
 
 ## Setup
 
@@ -28,18 +40,31 @@ If your project already has a `.claude` directory, merge the pieces:
 
 ```bash
 # Copy the skill
+mkdir -p .claude/skills
 cp -r /path/to/claude-skills/check-context/.claude/skills/check-context .claude/skills/check-context
 
-# Copy the hook
+# Copy the hooks
 mkdir -p .claude/hooks
-cp /path/to/claude-skills/check-context/.claude/hooks/check-context.py .claude/hooks/check-context.py
+cp /path/to/claude-skills/check-context/.claude/hooks/*.py .claude/hooks/
 ```
 
-Then add the hook to your `.claude/settings.json` (create it if it doesn't exist):
+Then merge the hook config into your `.claude/settings.json`:
 
 ```json
 {
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Read|Bash|Agent|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/check-context-tool.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -54,8 +79,6 @@ Then add the hook to your `.claude/settings.json` (create it if it doesn't exist
   }
 }
 ```
-
-If you already have a `settings.json` with hooks, merge the `Stop` entry into your existing hooks.
 
 ### 2. Add instructions to your CLAUDE.md
 
@@ -77,9 +100,12 @@ You are working within a finite context window. Be mindful of this at all times.
 - Don't load entire large files when you only need a specific section.
 - When you finish a unit of work, briefly tell the user what was done and what's next.
 
-### Context hook
-A hook monitors your context usage automatically. When it fires, it means context is getting high.
-You MUST relay its message to the user honestly — do not downplay or skip it.
+### Context hooks
+Two hooks monitor your context usage automatically:
+- A **mid-run nudge** fires periodically during tool calls. When you see it, finish your current logical task (don't stop mid-operation), then pause and report to the user.
+- An **end-of-response check** fires after each response. If context is high, you MUST report before continuing.
+
+You MUST relay context messages to the user honestly — do not downplay or skip them.
 When context is high, always offer the user two clear options:
 1. **Continue** — keep working, accepting the risk that context may run out
 2. **Handover** — you write a HANDOVER.md capturing full session state so a new session can continue seamlessly
@@ -108,28 +134,26 @@ Edit `.claude/skills/check-context/settings.json`:
 ```json
 {
   "threshold_percent": 60,
-  "check_interval": "every 3-5 tool calls, or after completing a logical unit of work",
   "on_threshold": "complete_and_ask"
 }
 ```
 
 | Setting | Default | Description |
 |---|---|---|
-| `threshold_percent` | `60` | Context usage % at which the hook starts reporting to the user |
-| `check_interval` | `"every 3-5 tool calls..."` | Hint for manual checking frequency (read by Claude, not enforced) |
+| `threshold_percent` | `60` | Context usage % at which hooks start reporting to the user |
 | `on_threshold` | `"complete_and_ask"` | Behavior: finish current work, report to user, offer options |
 
-Lower the threshold for more headroom. Raise it if you prefer Claude to work longer before alerting.
+The mid-run nudge checks every 10 heavy tool calls (configurable in `check-context-tool.py`).
 
 ## What the user sees
 
 **Below threshold** — Nothing. Claude works normally.
 
-**At threshold (default 60%)** — Claude pauses and tells the user:
-> Context is at 62% (124k/200k tokens). I'd recommend finishing the current task. We can continue (with the risk of hitting limits) or I can write a HANDOVER.md so a fresh session picks up where we left off. What would you prefer?
+**Mid-run nudge at threshold** — Claude finishes what it's doing, then:
+> Context is at 62% (124k/200k tokens). I'd recommend we wrap up the current task. We can continue (with the risk of hitting limits) or I can write a HANDOVER.md so a fresh session picks up where we left off. What would you prefer?
 
-**Critical (>85%)** — Claude stops and strongly recommends handover:
-> Context is at 87%. Continuing risks losing conversation history. I've written HANDOVER.md with everything needed. I recommend starting a fresh session.
+**Critical (>85%)** — Claude stops as soon as safely possible:
+> Context is at 87%. Continuing risks losing conversation history. I strongly recommend I write HANDOVER.md and we start a fresh session.
 
 ## Standalone usage
 
@@ -151,12 +175,14 @@ Or invoke manually during a session:
 check-context/
   README.md
   .claude/
-    settings.json                        # Hook registration
+    settings.json                        # Hook registration (PostToolUse + Stop)
     hooks/
-      check-context.py                   # Stop hook (automatic context monitoring)
+      context_lib.py                     # Shared logic (session detection, settings, counter)
+      check-context.py                   # Stop hook (end-of-response safety net)
+      check-context-tool.py              # PostToolUse hook (mid-run nudge)
     skills/
       check-context/
         SKILL.md                         # Manual skill definition
         settings.json                    # Threshold configuration
-        claude-context.py                # Context usage calculator
+        claude-context.py                # Context usage calculator (standalone)
 ```
