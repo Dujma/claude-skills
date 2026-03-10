@@ -8,11 +8,17 @@ Claude Code has a 200k token context window. Without awareness, Claude keeps wor
 
 ## How it works
 
-Two hooks, one script:
+Two thresholds, two hooks, one script:
 
-**UserPromptSubmit** — Fires before Claude processes each user message. If context is above threshold, it injects a note that Claude sees and relays to the user. Fires once per user message — no loops.
+| Zone | Hook | Behavior |
+|---|---|---|
+| Below `warn_threshold` | — | Silent. Claude works normally. |
+| >= `warn_threshold` | UserPromptSubmit | Warns user once per message. User decides to continue or hand over. |
+| >= `critical_threshold` | PostToolUse | Hard block. Stops Claude mid-run and forces a report to the user. |
 
-**PostToolUse** — Fires after heavy tool calls (`Read`, `Bash`, `Agent`, `WebFetch`). Catches context growth during long runs where the user isn't sending messages. Soft nudge at threshold, hard block at critical (>85%).
+**UserPromptSubmit** fires before Claude processes each user message. If context is above `warn_threshold`, it injects a note that Claude relays to the user. Fires once per user message — no loops. If the user says "continue", Claude works uninterrupted until the next user message.
+
+**PostToolUse** fires after heavy tool calls (`Read`, `Bash`, `Agent`, `WebFetch`). Only activates at `critical_threshold` — the emergency brake for long runs where context is about to run out.
 
 ## Setup
 
@@ -63,33 +69,33 @@ Then merge the hook config into your `.claude/settings.json`:
 }
 ```
 
-### 2. Configure the threshold (optional)
+That's it. No CLAUDE.md changes needed — the hooks handle everything.
+
+### 2. Configure thresholds (optional)
 
 Edit `.claude/skills/check-context/settings.json`:
 
 ```json
 {
-  "threshold_percent": 60,
-  "on_threshold": "complete_and_ask"
+  "warn_threshold": 50,
+  "critical_threshold": 75
 }
 ```
 
 | Setting | Default | Description |
 |---|---|---|
-| `threshold_percent` | `60` | Context usage % at which the hooks start reporting |
-| `on_threshold` | `"complete_and_ask"` | Behavior: report to user, offer continue or handover |
-
-That's it. No CLAUDE.md changes needed — the hooks handle everything.
+| `warn_threshold` | `50` | Context % at which the user is warned (once per message) |
+| `critical_threshold` | `75` | Context % at which Claude is hard-blocked mid-run |
 
 ## What the user sees
 
-**Below threshold** — Nothing. Claude works normally.
+**Below 50%** — Nothing. Claude works normally.
 
-**At threshold** — Claude informs the user:
-> Context is at 62% (124k/200k tokens). We can continue (with the risk of hitting limits) or I can write a HANDOVER.md so a fresh session picks up where we left off. What would you prefer?
+**At 50%** — Before processing the user's message, Claude informs them:
+> Context is at 52% (104k/200k tokens). We can continue working or I can write a HANDOVER.md so a fresh session picks up where we left off.
 
-**Critical (>85%)** — Claude stops and recommends handover:
-> Context is at 87%. Continuing risks losing conversation history. I strongly recommend writing a HANDOVER.md and starting a fresh session.
+**At 75%** — Claude is stopped mid-run:
+> Context is at 76%. Continuing risks losing conversation history. I strongly recommend writing a HANDOVER.md and starting a fresh session.
 
 ## Manual check
 
