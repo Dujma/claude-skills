@@ -21,13 +21,16 @@ def find_session_dir():
     projects_dir = os.path.expanduser('~/.claude/projects')
     if not os.path.isdir(projects_dir):
         return None
+    # Claude stores project dirs by replacing '/' and '.' with '-' in the path
+    expected_name = cwd.replace('/', '-').replace('.', '-')
+    candidate = os.path.join(projects_dir, expected_name)
+    if os.path.isdir(candidate):
+        return candidate
+    # Fallback: try matching against all project directories
     for name in os.listdir(projects_dir):
-        decoded = name.replace('-', '/')
-        cwd_normalized = cwd.replace('.', '/').replace('-', '/')
-        if decoded.endswith(cwd_normalized) or cwd_normalized.endswith(decoded):
-            candidate = os.path.join(projects_dir, name)
-            if os.path.isdir(candidate):
-                return candidate
+        candidate = os.path.join(projects_dir, name)
+        if os.path.isdir(candidate) and expected_name.endswith(name):
+            return candidate
     return None
 
 

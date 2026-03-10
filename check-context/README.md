@@ -8,21 +8,22 @@ Claude Code has a finite context window (200k tokens). Without awareness of how 
 
 ## Setup
 
-### 1. Copy the skill into your project
+### 1. Copy the `.claude` folder into your project
+
+The skill ships as a ready-to-use `.claude` directory. From your project root:
 
 ```bash
-# From your project root
-mkdir -p .claude/skills
-cp -r /path/to/claude-skills/check-context .claude/skills/check-context
+# Copy the .claude folder into your project
+cp -r /path/to/claude-skills/check-context/.claude .claude
 ```
 
-Or clone and symlink:
+If your project already has a `.claude` directory, merge the contents:
 
 ```bash
-git clone git@github.com:Dujma/claude-skills.git ~/claude-skills
-mkdir -p .claude/skills
-ln -s ~/claude-skills/check-context .claude/skills/check-context
+cp -r /path/to/claude-skills/check-context/.claude/skills .claude/skills
 ```
+
+That's it — the skill is now available as `/check-context`.
 
 ### 2. Add instructions to your CLAUDE.md
 
@@ -113,8 +114,11 @@ Example output:
 
 ```
 check-context/
-  README.md           # This file
-  SKILL.md            # Skill definition (instructions Claude follows)
-  settings.json       # Configurable threshold and behavior
-  claude-context.py   # Python script that reads session token usage
+  README.md                              # This file
+  .claude/
+    skills/
+      check-context/
+        SKILL.md                         # Skill definition (instructions Claude follows)
+        settings.json                    # Configurable threshold and behavior
+        claude-context.py                # Python script that reads session token usage
 ```

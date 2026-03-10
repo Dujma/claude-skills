@@ -6,11 +6,11 @@ user-invocable: true
 
 ## Current Context Usage
 
-!`python3 check-context/claude-context.py`
+!`python3 .claude/skills/check-context/claude-context.py`
 
 ## Settings
 
-Read settings from `check-context/settings.json`:
+Read settings from `.claude/skills/check-context/settings.json`:
 - **threshold_percent**: The context usage percentage at which to wind down (default: 60)
 - **on_threshold**: What to do when threshold is reached (default: "complete_and_ask")
 
