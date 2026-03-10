@@ -115,24 +115,27 @@ def handle_prompt():
         sys.exit(0)
 
     if percent > 85:
-        print(json.dumps({
-            "additionalContext": (
-                f"[CONTEXT CRITICAL: {percent}% used ({used_k}k/{total_k}k tokens)] "
-                f"Before doing anything else, tell the user that context is critically high. "
-                f"Summarize what has been accomplished so far and what remains. "
-                f"Strongly recommend writing a HANDOVER.md and starting a fresh session. "
-                f"Only continue if the user explicitly asks you to."
-            )
-        }))
+        msg = (
+            f"[CONTEXT CRITICAL: {percent}% used ({used_k}k/{total_k}k tokens)] "
+            f"Before doing anything else, tell the user that context is critically high. "
+            f"Summarize what has been accomplished so far and what remains. "
+            f"Strongly recommend writing a HANDOVER.md and starting a fresh session. "
+            f"Only continue if the user explicitly asks you to."
+        )
     else:
-        print(json.dumps({
-            "additionalContext": (
-                f"[CONTEXT: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%)] "
-                f"Inform the user that context is getting high. "
-                f"Offer two options: (1) continue working, accepting the risk of hitting limits, "
-                f"or (2) write a HANDOVER.md to capture progress for a fresh session."
-            )
-        }))
+        msg = (
+            f"[CONTEXT: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%)] "
+            f"Inform the user that context is getting high. "
+            f"Offer two options: (1) continue working, accepting the risk of hitting limits, "
+            f"or (2) write a HANDOVER.md to capture progress for a fresh session."
+        )
+
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": msg,
+        }
+    }))
 
     sys.exit(0)
 
@@ -157,23 +160,32 @@ def handle_tool():
         sys.exit(0)
 
     if percent > 85:
+        msg = (
+            f"CONTEXT CRITICAL: {percent}% used ({used_k}k/{total_k}k tokens). "
+            f"Finish your immediate action, then STOP and tell the user:\n"
+            f"- Context is at {percent}% — continuing risks losing conversation history\n"
+            f"- Summarize what was accomplished and what remains\n"
+            f"- Strongly recommend writing HANDOVER.md and starting a fresh session"
+        )
         print(json.dumps({
             "decision": "block",
-            "reason": (
-                f"CONTEXT CRITICAL: {percent}% used ({used_k}k/{total_k}k tokens). "
-                f"Finish your immediate action, then STOP and tell the user:\n"
-                f"- Context is at {percent}% — continuing risks losing conversation history\n"
-                f"- Summarize what was accomplished and what remains\n"
-                f"- Strongly recommend writing HANDOVER.md and starting a fresh session"
-            )
+            "reason": msg,
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": msg,
+            }
         }))
     else:
+        msg = (
+            f"Context nudge: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%). "
+            f"Finish your current logical task, then pause and tell the user about context usage. "
+            f"Offer to continue or create a HANDOVER.md."
+        )
         print(json.dumps({
-            "reason": (
-                f"Context nudge: {percent}% used ({used_k}k/{total_k}k tokens, threshold: {threshold}%). "
-                f"Finish your current logical task, then pause and tell the user about context usage. "
-                f"Offer to continue or create a HANDOVER.md."
-            )
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": msg,
+            }
         }))
 
     sys.exit(0)
