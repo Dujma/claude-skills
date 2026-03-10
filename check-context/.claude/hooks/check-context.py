@@ -1,42 +1,35 @@
 #!/usr/bin/env python3
 """Stop hook: safety net at the end of each Claude response.
 
-If context is above threshold and we haven't already notified at this level,
-blocks Claude and forces it to report to the user. Remembers the last
-notification level so it won't fire again until context grows significantly.
-Also resets the tool call counter so the next run starts fresh.
+Only fires on Claude's first response after a user message.
+If Claude already responded (turn count > 1), we already notified
+this turn — stay silent to avoid looping.
 """
 import sys, json, os
 
 sys.path.insert(0, os.path.join(os.getcwd(), '.claude', 'hooks'))
-from context_lib import (
-    get_context_usage, load_settings, reset_counter,
-    should_notify, write_last_notified, DEFAULT_THRESHOLD,
-)
+from context_lib import get_session_data, load_settings, DEFAULT_THRESHOLD
 
 
 def main():
-    # Reset tool call counter at end of each response
-    reset_counter()
+    data = get_session_data()
+    if not data:
+        sys.exit(0)
 
-    usage = get_context_usage()
-    if not usage:
+    # Only notify on Claude's first response after the user spoke.
+    # If we already notified and Claude responded again, stay silent.
+    if data['assistant_turns_since_user'] > 1:
         sys.exit(0)
 
     settings = load_settings()
     threshold = settings.get('threshold_percent', DEFAULT_THRESHOLD)
-    percent = usage['percent_used']
-    used_k = round(usage['used_tokens'] / 1000)
-    total_k = round(usage['total_tokens'] / 1000)
+    percent = data['percent_used']
+    used_k = round(data['used_tokens'] / 1000)
+    total_k = round(data['total_tokens'] / 1000)
 
-    # Check if we should notify (handles dedup)
-    if not should_notify(percent, threshold):
+    if percent < threshold:
         sys.exit(0)
 
-    # Record that we notified at this level
-    write_last_notified(percent)
-
-    # Critical zone
     if percent > 85:
         print(json.dumps({
             "decision": "block",
@@ -51,7 +44,6 @@ def main():
         }))
         sys.exit(0)
 
-    # At threshold
     print(json.dumps({
         "decision": "block",
         "reason": (
@@ -61,7 +53,7 @@ def main():
             f"- Recommend finishing the current task and pausing\n"
             f"- Offer two options: (1) continue working (risk of hitting limits), "
             f"or (2) create a HANDOVER.md to capture progress for a fresh session\n"
-            f"- If the user chooses to continue, keep working but warn again when usage grows significantly"
+            f"- If the user chooses to continue, keep working — you will be notified again when usage grows"
         )
     }))
     sys.exit(0)

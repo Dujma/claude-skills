@@ -1,4 +1,7 @@
-"""Shared context-checking logic used by both hooks."""
+"""Shared context-checking logic used by both hooks.
+
+No temp files. All state is derived from the session JSONL itself.
+"""
 import os, json, glob
 
 MODEL_CONTEXT_WINDOWS = {
@@ -8,9 +11,6 @@ MODEL_CONTEXT_WINDOWS = {
 }
 DEFAULT_CONTEXT_WINDOW = 200000
 DEFAULT_THRESHOLD = 60
-COUNTER_FILE = '/tmp/claude-context-hook-counter'
-NOTIFIED_FILE = '/tmp/claude-context-hook-notified'
-RENOTIFY_INCREMENT = 10  # only notify again after this many % more usage
 
 
 def find_session_dir():
@@ -47,7 +47,14 @@ def load_settings():
         return {}
 
 
-def get_context_usage():
+def get_session_data():
+    """Read the session JSONL and return context usage + conversation state.
+
+    Returns None if no session data found. Otherwise returns a dict with:
+    - used_tokens, total_tokens, percent_used, assistant_messages
+    - assistant_turns_since_user: how many assistant messages since the last
+      user message (used for dedup — if >1, we already notified this turn)
+    """
     session_dir = find_session_dir()
     if not session_dir:
         return None
@@ -60,6 +67,7 @@ def get_context_usage():
     last_usage = None
     total_output = 0
     message_count = 0
+    assistant_turns_since_user = 0
 
     with open(session_file) as f:
         for line in f:
@@ -67,7 +75,14 @@ def get_context_usage():
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if obj.get('type') == 'assistant':
+
+            msg_type = obj.get('type')
+
+            if msg_type == 'human':
+                assistant_turns_since_user = 0
+
+            if msg_type == 'assistant':
+                assistant_turns_since_user += 1
                 msg = obj.get('message', {})
                 if not model:
                     model = msg.get('model')
@@ -92,59 +107,5 @@ def get_context_usage():
         "total_tokens": context_window,
         "percent_used": percent_used,
         "assistant_messages": message_count,
+        "assistant_turns_since_user": assistant_turns_since_user,
     }
-
-
-def read_counter():
-    try:
-        with open(COUNTER_FILE) as f:
-            return int(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        return 0
-
-
-def write_counter(n):
-    with open(COUNTER_FILE, 'w') as f:
-        f.write(str(n))
-
-
-def reset_counter():
-    write_counter(0)
-
-
-def read_last_notified():
-    """Read the percentage at which we last notified."""
-    try:
-        with open(NOTIFIED_FILE) as f:
-            return float(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        return 0.0
-
-
-def write_last_notified(percent):
-    with open(NOTIFIED_FILE, 'w') as f:
-        f.write(str(percent))
-
-
-def should_notify(current_percent, threshold):
-    """Check if we should notify based on last notification.
-
-    Returns True if:
-    - We haven't notified yet and we're above threshold
-    - Context has grown by RENOTIFY_INCREMENT since last notification
-    - We're in the critical zone (>85%) and haven't notified for this zone
-    """
-    last = read_last_notified()
-
-    if current_percent < threshold:
-        return False
-
-    # Never notified above threshold yet
-    if last < threshold:
-        return True
-
-    # Context grew by the increment since last notification
-    if current_percent >= last + RENOTIFY_INCREMENT:
-        return True
-
-    return False

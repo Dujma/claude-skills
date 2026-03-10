@@ -2,51 +2,35 @@
 """PostToolUse hook: soft nudge during long runs.
 
 Fires after heavy tool calls (Read, Bash, Agent, WebFetch).
-Uses a counter to only check every N calls, avoiding overhead.
-Also checks the notification guard so it won't re-nudge after
-the user has already been informed at this context level.
+No counter — just checks every time (reading the JSONL is fast).
+Uses the same turn-count dedup: only nudges on the first response
+after a user message, so it won't re-nudge if Claude already got the message.
 """
 import sys, json, os
 
 sys.path.insert(0, os.path.join(os.getcwd(), '.claude', 'hooks'))
-from context_lib import (
-    get_context_usage, load_settings, read_counter, write_counter,
-    reset_counter, should_notify, write_last_notified, DEFAULT_THRESHOLD,
-)
-
-CHECK_EVERY_N = 10
+from context_lib import get_session_data, load_settings, DEFAULT_THRESHOLD
 
 
 def main():
-    # Increment counter
-    count = read_counter() + 1
-    write_counter(count)
-
-    # Only check every N tool calls
-    if count < CHECK_EVERY_N:
+    data = get_session_data()
+    if not data:
         sys.exit(0)
 
-    # Reset counter and do the check
-    reset_counter()
-
-    usage = get_context_usage()
-    if not usage:
+    # Already notified this turn
+    if data['assistant_turns_since_user'] > 1:
         sys.exit(0)
 
     settings = load_settings()
     threshold = settings.get('threshold_percent', DEFAULT_THRESHOLD)
-    percent = usage['percent_used']
-    used_k = round(usage['used_tokens'] / 1000)
-    total_k = round(usage['total_tokens'] / 1000)
+    percent = data['percent_used']
+    used_k = round(data['used_tokens'] / 1000)
+    total_k = round(data['total_tokens'] / 1000)
 
-    # Check if we should notify (handles dedup)
-    if not should_notify(percent, threshold):
+    if percent < threshold:
         sys.exit(0)
 
-    # Record that we notified at this level
-    write_last_notified(percent)
-
-    # Critical: hard block
+    # Critical: hard block mid-run
     if percent > 85:
         print(json.dumps({
             "decision": "block",
