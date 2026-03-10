@@ -76,7 +76,7 @@ def get_session_data():
                 continue
 
             msg_type = obj.get('type')
-            if msg_type == 'human':
+            if msg_type in ('human', 'user'):
                 assistant_turns_since_user = 0
             if msg_type == 'assistant':
                 assistant_turns_since_user += 1
