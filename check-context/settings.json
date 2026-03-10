@@ -1,0 +1,5 @@
+{
+  "threshold_percent": 60,
+  "check_interval": "every 3-5 tool calls, or after completing a logical unit of work",
+  "on_threshold": "complete_and_ask"
+}
