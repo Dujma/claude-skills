@@ -14,11 +14,11 @@ Two thresholds, two hooks, one script:
 |---|---|---|
 | Below `warn_threshold` | — | Silent. Claude works normally. |
 | >= `warn_threshold` | UserPromptSubmit | Warns user once per message. User decides to continue or hand over. |
-| >= `critical_threshold` | PostToolUse | Hard block. Stops Claude mid-run and forces a report to the user. |
+| >= `critical_threshold` | PostToolUse | Injects critical warning after every heavy tool call. Claude is told to stop and report. |
 
 **UserPromptSubmit** fires before Claude processes each user message. If context is above `warn_threshold`, it injects a note that Claude relays to the user. Fires once per user message — no loops. If the user says "continue", Claude works uninterrupted until the next user message.
 
-**PostToolUse** fires after heavy tool calls (`Read`, `Bash`, `Agent`, `WebFetch`). Only activates at `critical_threshold` — the emergency brake for long runs where context is about to run out.
+**PostToolUse** fires after heavy tool calls (`Read`, `Bash`, `Agent`, `WebFetch`). Only activates at `critical_threshold`. Injects a critical warning into Claude's context after every matching tool call, pressing it to stop and report to the user.
 
 ## Setup
 
@@ -32,8 +32,7 @@ cp -r /path/to/claude-skills/check-context/.claude .claude
 If your project already has a `.claude` directory, merge the pieces:
 
 ```bash
-mkdir -p .claude/hooks .claude/skills
-cp /path/to/claude-skills/check-context/.claude/hooks/check-context.py .claude/hooks/
+mkdir -p .claude/skills
 cp -r /path/to/claude-skills/check-context/.claude/skills/check-context .claude/skills/
 ```
 
@@ -47,7 +46,7 @@ Then merge the hook config into your `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/check-context.py prompt",
+            "command": "python3 .claude/skills/check-context/claude-context.py prompt",
             "timeout": 10
           }
         ]
@@ -59,7 +58,7 @@ Then merge the hook config into your `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/check-context.py tool",
+            "command": "python3 .claude/skills/check-context/claude-context.py tool",
             "timeout": 10
           }
         ]
@@ -118,11 +117,9 @@ check-context/
   README.md
   .claude/
     settings.json                        # Hook registration
-    hooks/
-      check-context.py                   # Single script for both hooks
     skills/
       check-context/
         SKILL.md                         # Manual /check-context skill
         settings.json                    # Threshold configuration
-        claude-context.py                # Standalone context calculator
+        claude-context.py                # Single script for hooks + manual check
 ```

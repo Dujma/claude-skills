@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/check-context.py prompt",
+            "command": "python3 .claude/skills/check-context/claude-context.py prompt",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/check-context.py tool",
+            "command": "python3 .claude/skills/check-context/claude-context.py tool",
             "timeout": 10
           }
         ]
