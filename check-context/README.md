@@ -84,16 +84,16 @@ Edit `.claude/skills/check-context/settings.json`:
 | Setting | Default | Description |
 |---|---|---|
 | `warn_threshold` | `50` | Context % at which the user is warned (once per message) |
-| `critical_threshold` | `75` | Context % at which Claude is hard-blocked mid-run |
+| `critical_threshold` | `75` | Context % at which Claude is urged to stop after every tool call |
 
 ## What the user sees
 
-**Below 50%** — Nothing. Claude works normally.
+**Below `warn_threshold`** — Nothing. Claude works normally.
 
-**At 50%** — Before processing the user's message, Claude informs them:
+**At `warn_threshold`** — Before processing the user's message, Claude informs them:
 > Context is at 52% (104k/200k tokens). We can continue working or I can write a HANDOVER.md so a fresh session picks up where we left off.
 
-**At 75%** — Claude is stopped mid-run:
+**At `critical_threshold`** — After every heavy tool call, Claude is urged to stop:
 > Context is at 76%. Continuing risks losing conversation history. I strongly recommend writing a HANDOVER.md and starting a fresh session.
 
 ## Manual check
